@@ -8,29 +8,25 @@ interface Props {
   onClose: () => void;
 }
 
-/**
- * ComparisonView shows a side-by-side comparison of current vs optimized parameters,
- * with energy savings, quality improvements, and cost reductions highlighted.
- * This is the key selling point for the demo - showing tangible engineering value.
- */
 export function ComparisonView({ currentParams, optimizedParams, onClose }: Props) {
   const currentQuality = calculateTreatment(currentParams, INFLUENT_QUALITY);
   const optimizedQuality = calculateTreatment(optimizedParams, INFLUENT_QUALITY);
   const currentEnergy = calculateEnergy(currentParams);
   const optimizedEnergy = calculateEnergy(optimizedParams);
 
-  const energySavings = ((currentEnergy.total - optimizedEnergy.total) / currentEnergy.total * 100);
+  const energySavings = currentEnergy.total > 0
+    ? ((currentEnergy.total - optimizedEnergy.total) / currentEnergy.total * 100)
+    : 0;
   const costSavings = currentEnergy.costPerDay - optimizedEnergy.costPerDay;
   const carbonSavings = currentEnergy.carbonPerDay - optimizedEnergy.carbonPerDay;
+
+  const hasData = currentEnergy.total > 0 && optimizedEnergy.total > 0;
 
   return (
     <div style={{
       position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(2, 6, 12, 0.9)',
+      top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(2, 6, 12, 0.92)',
       backdropFilter: 'blur(12px)',
       zIndex: 1000,
       display: 'flex',
@@ -41,165 +37,197 @@ export function ComparisonView({ currentParams, optimizedParams, onClose }: Prop
         background: 'linear-gradient(180deg, #0d1f35 0%, #0a1830 100%)',
         borderRadius: 16,
         padding: 24,
-        maxWidth: 800,
-        width: '90%',
-        maxHeight: '85vh',
+        maxWidth: 900,
+        width: '92%',
+        maxHeight: '88vh',
         overflowY: 'auto',
         border: '1px solid rgba(30, 60, 100, 0.5)',
         boxShadow: '0 24px 80px rgba(0, 0, 0, 0.6)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: '#fff', fontWeight: 800 }}>
-            Optimization Results
+            Before vs After Optimization
           </h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'rgba(30, 60, 100, 0.3)',
-              border: '1px solid rgba(30, 60, 100, 0.5)',
-              color: '#8ba3c0',
-              borderRadius: 6,
-              padding: '6px 14px',
-              cursor: 'pointer',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
+          <button onClick={onClose} style={{
+            background: 'rgba(30, 60, 100, 0.3)',
+            border: '1px solid rgba(30, 60, 100, 0.5)',
+            color: '#8ba3c0',
+            borderRadius: 6,
+            padding: '6px 14px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+          }}>
             Close
           </button>
         </div>
 
-        {/* Savings highlight cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
-          <SavingsCard
-            label="Energy Savings"
-            value={`${energySavings.toFixed(1)}%`}
-            subtext={`${currentEnergy.total.toFixed(3)} → ${optimizedEnergy.total.toFixed(3)} kWh/m³`}
-            color="#ff9800"
-          />
-          <SavingsCard
-            label="Cost Savings"
-            value={`£${costSavings.toFixed(0)}/day`}
-            subtext={`£${(costSavings * 365).toFixed(0)}/year`}
-            color="#66bb6a"
-          />
-          <SavingsCard
-            label="CO₂ Reduction"
-            value={`${carbonSavings.toFixed(0)} kg/day`}
-            subtext={`${(carbonSavings * 365 / 1000).toFixed(1)} tonnes/year`}
-            color="#42a5f5"
-          />
-        </div>
+        {!hasData ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#5a8aaa' }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>⚠</div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>No optimization data available</div>
+            <div style={{ fontSize: 11, marginTop: 6 }}>
+              Click "Optimize Energy" first, then return to compare results.
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Savings cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+              <SavingsCard
+                label="Energy Savings"
+                value={`${energySavings.toFixed(1)}%`}
+                subtext={`${currentEnergy.total.toFixed(3)} → ${optimizedEnergy.total.toFixed(3)} kWh/m³`}
+                color="#ff9800"
+              />
+              <SavingsCard
+                label="Cost Savings"
+                value={`£${costSavings.toFixed(0)}/day`}
+                subtext={`£${(costSavings * 365).toFixed(0)}/year`}
+                color="#66bb6a"
+              />
+              <SavingsCard
+                label="CO₂ Reduction"
+                value={`${carbonSavings.toFixed(0)} kg/day`}
+                subtext={`${(carbonSavings * 365 / 1000).toFixed(1)} tonnes/year`}
+                color="#42a5f5"
+              />
+            </div>
 
-        {/* Detailed comparison table */}
-        <div style={{
-          background: 'rgba(8, 18, 35, 0.6)',
-          borderRadius: 10,
-          padding: 16,
-          border: '1px solid rgba(30, 60, 100, 0.3)',
-        }}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 12, color: '#5ab4f5', textTransform: 'uppercase', letterSpacing: 1 }}>
-            Parameter Changes
-          </h3>
-          {[
-            { label: 'Coagulant Dose', key: 'coagulantDose' as const, unit: 'mg/L' },
-            { label: 'Mix Intensity', key: 'mixingIntensity' as const, unit: '%', scale: 100 },
-            { label: 'Aeration Rate', key: 'aerationRate' as const, unit: 'm³/m³/h' },
-            { label: 'Flow Rate', key: 'flowRate' as const, unit: 'm³/h' },
-            { label: 'Filter Loading', key: 'filterLoadingRate' as const, unit: 'm/h' },
-          ].map(row => {
-            const current = currentParams[row.key];
-            const optimized = optimizedParams[row.key];
-            const displayCurrent = row.scale ? current * row.scale : current;
-            const displayOptimized = row.scale ? optimized * row.scale : optimized;
-            const changed = Math.abs(current - optimized) > 0.01;
-            return (
-              <div key={row.key} style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '6px 0',
-                borderBottom: '1px solid rgba(30, 60, 100, 0.2)',
-                fontSize: 11,
+            {/* Left vs Right comparison */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 1fr', gap: 0, marginBottom: 20 }}>
+              {/* Before */}
+              <div style={{
+                background: 'rgba(232, 168, 56, 0.06)',
+                borderRadius: '10px 0 0 10px',
+                padding: 16,
+                border: '1px solid rgba(232, 168, 56, 0.2)',
               }}>
-                <span style={{ color: '#7a9ab8' }}>{row.label}</span>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ color: '#8ba3c0', fontFamily: 'monospace' }}>
-                    {displayCurrent.toFixed(1)}{row.unit}
+                <div style={{
+                  fontSize: 11,
+                  color: '#e8a838',
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                  textAlign: 'center',
+                }}>
+                  Before Optimization
+                </div>
+                <ParamRow label="Coagulant Dose" value={`${currentParams.coagulantDose.toFixed(0)} mg/L`} />
+                <ParamRow label="Mix Intensity" value={`${(currentParams.mixingIntensity * 100).toFixed(0)}%`} />
+                <ParamRow label="Aeration Rate" value={`${currentParams.aerationRate.toFixed(1)} m³/m³/h`} />
+                <ParamRow label="Flow Rate" value={`${currentParams.flowRate.toFixed(0)} m³/h`} />
+                <ParamRow label="Filter Loading" value={`${currentParams.filterLoadingRate.toFixed(1)} m/h`} />
+                <ParamRow label="Target DO" value={`${currentParams.dissolvedOxygen.toFixed(1)} mg/L`} />
+                <div style={{
+                  marginTop: 10,
+                  paddingTop: 10,
+                  borderTop: '1px solid rgba(232, 168, 56, 0.2)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 12,
+                }}>
+                  <span style={{ color: '#e8a838' }}>Energy</span>
+                  <span style={{ color: '#e8a838', fontWeight: 800, fontFamily: 'monospace' }}>
+                    {currentEnergy.total.toFixed(3)} kWh/m³
                   </span>
-                  {changed && (
-                    <>
-                      <span style={{ color: '#4a6a8a' }}>→</span>
-                      <span style={{ color: '#66bb6a', fontFamily: 'monospace', fontWeight: 700 }}>
-                        {displayOptimized.toFixed(1)}{row.unit}
-                      </span>
-                      <span style={{
-                        color: optimized < current ? '#66bb6a' : '#ff9800',
-                        fontSize: 9,
-                        fontWeight: 700,
-                      }}>
-                        {optimized < current ? '↓' : '↑'}
-                      </span>
-                    </>
-                  )}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 4 }}>
+                  <span style={{ color: '#8ba3c0' }}>Effluent Turbidity</span>
+                  <span style={{ color: '#8ba3c0', fontFamily: 'monospace' }}>
+                    {currentQuality.afterAeration.turbidity.toFixed(1)} NTU
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 2 }}>
+                  <span style={{ color: '#8ba3c0' }}>Effluent BOD</span>
+                  <span style={{ color: '#8ba3c0', fontFamily: 'monospace' }}>
+                    {currentQuality.afterAeration.bod.toFixed(1)} mg/L
+                  </span>
                 </div>
               </div>
-            );
-          })}
-        </div>
 
-        {/* Water quality comparison */}
-        <div style={{
-          background: 'rgba(8, 18, 35, 0.6)',
-          borderRadius: 10,
-          padding: 16,
-          marginTop: 12,
-          border: '1px solid rgba(30, 60, 100, 0.3)',
-        }}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 12, color: '#5ab4f5', textTransform: 'uppercase', letterSpacing: 1 }}>
-            Water Quality Impact
-          </h3>
-          {[
-            { label: 'Effluent Turbidity', current: currentQuality.afterAeration.turbidity, optimized: optimizedQuality.afterAeration.turbidity, unit: 'NTU', max: 20 },
-            { label: 'Effluent BOD', current: currentQuality.afterAeration.bod, optimized: optimizedQuality.afterAeration.bod, unit: 'mg/L', max: 50 },
-            { label: 'Dissolved Oxygen', current: currentQuality.afterAeration.dissolvedOxygen, optimized: optimizedQuality.afterAeration.dissolvedOxygen, unit: 'mg/L', max: 10 },
-          ].map(row => (
-            <div key={row.label} style={{ marginBottom: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 3 }}>
-                <span style={{ color: '#7a9ab8' }}>{row.label}</span>
-                <span style={{ color: '#8ba3c0', fontFamily: 'monospace' }}>
-                  {row.current.toFixed(1)} → <span style={{ color: '#66bb6a' }}>{row.optimized.toFixed(1)}</span> {row.unit}
-                </span>
+              {/* Arrow */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(30, 60, 100, 0.2)',
+                borderTop: '1px solid rgba(30, 60, 100, 0.3)',
+                borderBottom: '1px solid rgba(30, 60, 100, 0.3)',
+              }}>
+                <span style={{ fontSize: 24, color: '#5ab4f5' }}>→</span>
               </div>
-              <div style={{ display: 'flex', gap: 2 }}>
+
+              {/* After */}
+              <div style={{
+                background: 'rgba(102, 187, 106, 0.06)',
+                borderRadius: '0 10px 10px 0',
+                padding: 16,
+                border: '1px solid rgba(102, 187, 106, 0.2)',
+              }}>
                 <div style={{
-                  height: 4,
-                  background: 'rgba(30, 60, 100, 0.3)',
-                  borderRadius: 2,
-                  flex: 1,
-                  position: 'relative',
+                  fontSize: 11,
+                  color: '#66bb6a',
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: 1,
+                  marginBottom: 12,
+                  textAlign: 'center',
                 }}>
-                  <div style={{
-                    position: 'absolute',
-                    left: 0, top: 0, bottom: 0,
-                    width: `${Math.min(100, row.current / row.max * 100)}%`,
-                    background: '#e8a838',
-                    borderRadius: 2,
-                  }} />
-                  <div style={{
-                    position: 'absolute',
-                    left: 0, top: 0, bottom: 0,
-                    width: `${Math.min(100, row.optimized / row.max * 100)}%`,
-                    background: '#66bb6a',
-                    borderRadius: 2,
-                    opacity: 0.6,
-                  }} />
+                  After Optimization
+                </div>
+                <ParamRow label="Coagulant Dose" value={`${optimizedParams.coagulantDose.toFixed(0)} mg/L`} />
+                <ParamRow label="Mix Intensity" value={`${(optimizedParams.mixingIntensity * 100).toFixed(0)}%`} />
+                <ParamRow label="Aeration Rate" value={`${optimizedParams.aerationRate.toFixed(1)} m³/m³/h`} />
+                <ParamRow label="Flow Rate" value={`${optimizedParams.flowRate.toFixed(0)} m³/h`} />
+                <ParamRow label="Filter Loading" value={`${optimizedParams.filterLoadingRate.toFixed(1)} m/h`} />
+                <ParamRow label="Target DO" value={`${optimizedParams.dissolvedOxygen.toFixed(1)} mg/L`} />
+                <div style={{
+                  marginTop: 10,
+                  paddingTop: 10,
+                  borderTop: '1px solid rgba(102, 187, 106, 0.2)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 12,
+                }}>
+                  <span style={{ color: '#66bb6a' }}>Energy</span>
+                  <span style={{ color: '#66bb6a', fontWeight: 800, fontFamily: 'monospace' }}>
+                    {optimizedEnergy.total.toFixed(3)} kWh/m³
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 4 }}>
+                  <span style={{ color: '#8ba3c0' }}>Effluent Turbidity</span>
+                  <span style={{ color: '#8ba3c0', fontFamily: 'monospace' }}>
+                    {optimizedQuality.afterAeration.turbidity.toFixed(1)} NTU
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 2 }}>
+                  <span style={{ color: '#8ba3c0' }}>Effluent BOD</span>
+                  <span style={{ color: '#8ba3c0', fontFamily: 'monospace' }}>
+                    {optimizedQuality.afterAeration.bod.toFixed(1)} mg/L
+                  </span>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+function ParamRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      padding: '4px 0',
+      borderBottom: '1px solid rgba(30, 60, 100, 0.15)',
+      fontSize: 11,
+    }}>
+      <span style={{ color: '#7a9ab8' }}>{label}</span>
+      <span style={{ color: '#d0e0f0', fontFamily: 'monospace', fontWeight: 600 }}>{value}</span>
     </div>
   );
 }

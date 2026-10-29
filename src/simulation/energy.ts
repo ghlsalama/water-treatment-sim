@@ -3,7 +3,7 @@
  * Calculates energy for each stage based on operational parameters.
  */
 
-import { TreatmentParams } from './treatment';
+import { TreatmentParams, WaterQuality, calculateTreatment } from './treatment';
 
 export interface EnergyBreakdown {
   coagulation: number;    // kWh/m^3
@@ -107,107 +107,120 @@ export function efficiencyScore(params: TreatmentParams, bodRemovalEfficiency: n
   return Math.min(100, (bodRemovalEfficiency * 100) / (energy.total * 2));
 }
 
+/** Round a tuned setting to a value an operator would actually dial in. */
+function roundForDisplay(knob: keyof TreatmentParams, value: number): number {
+  switch (knob) {
+    case 'flowRate': return Math.round(value);
+    case 'flocculationTime': return Math.round(value / 10) * 10;
+    case 'coagulantDose':
+    case 'filterLoadingRate': return Math.round(value * 10) / 10;
+    case 'mixingIntensity':
+    case 'sludgeBlanketDepth': return Math.round(value * 100) / 100;
+    case 'aerationRate': return Math.round(value * 100) / 100;
+    default: return value;
+  }
+}
+
+/** Smallest adjustment an operator could make on each control. */
+function stepFor(knob: keyof TreatmentParams): number {
+  switch (knob) {
+    case 'flowRate': return 1;
+    case 'flocculationTime': return 10;
+    case 'coagulantDose':
+    case 'filterLoadingRate': return 0.1;
+    default: return 0.01;
+  }
+}
+
 /**
  * Optimize parameters for minimum energy while meeting quality targets.
- * Uses gradient-guided search with constraint handling.
+ *
+ * Every knob below is monotone in energy - lower is always cheaper - so each
+ * one is walked down to the lowest value that still meets the effluent
+ * targets. Quality is judged with the real treatment model rather than an
+ * estimate, so the result is the cheapest set of parameters that the plant
+ * can actually run at.
  */
 export function optimizeEnergy(
   params: TreatmentParams,
   targets: { maxTurbidity: number; maxBod: number; minDO: number },
-  influentQuality: { turbidity: number; bod: number }
+  influentQuality: WaterQuality
 ): { params: TreatmentParams; energy: EnergyBreakdown; quality: { turbidity: number; bod: number; do: number } } {
-  // Define bounds for each parameter
-  const bounds = {
-    coagulantDose: [5, 60] as [number, number],
-    mixingIntensity: [0.2, 1.0] as [number, number],
-    flocculationTime: [600, 3600] as [number, number],
-    flocGrowthRate: [0.1, 0.8] as [number, number],
-    sedimentationEfficiency: [0.6, 0.98] as [number, number],
-    sludgeBlanketDepth: [0.1, 1.5] as [number, number],
-    filterLoadingRate: [4, 15] as [number, number],
-    filterRemovalEfficiency: [0.8, 0.99] as [number, number],
-    aerationRate: [0.5, 6.0] as [number, number],
-    oxygenTransferEfficiency: [0.1, 0.5] as [number, number],
-    dissolvedOxygen: [2, 10] as [number, number],
-    flowRate: [50, 200] as [number, number],
+  // Bounds for each tunable parameter
+  const bounds: Partial<Record<keyof TreatmentParams, [number, number]>> = {
+    coagulantDose: [5, 60],
+    mixingIntensity: [0.2, 1.0],
+    flocculationTime: [600, 3600],
+    sludgeBlanketDepth: [0.1, 1.5],
+    filterLoadingRate: [4, 15],
+    aerationRate: [0.5, 6.0],
+    flowRate: [50, 200],
   };
 
-  // Start from current params
+  const meetsTargets = (candidate: TreatmentParams): boolean => {
+    const q = calculateTreatment(candidate, influentQuality);
+    return (
+      q.afterAeration.turbidity <= targets.maxTurbidity &&
+      q.afterAeration.bod <= targets.maxBod &&
+      q.afterAeration.dissolvedOxygen >= targets.minDO
+    );
+  };
+
   let best = { ...params };
-  let bestEnergy = calculateEnergy(best);
 
-  // Try reducing aeration first (biggest energy consumer)
-  const aerationSteps = 20;
-  for (let i = 0; i <= aerationSteps; i++) {
-    const aerationRate = bounds.aerationRate[0] + (bounds.aerationRate[1] - bounds.aerationRate[0]) * (i / aerationSteps);
-    const candidate = { ...best, aerationRate };
-    const energy = calculateEnergy(candidate);
+  // Ordered by how much each knob is worth: the aeration blower dominates
+  // the energy bill, so it is tuned first and the cheap wins follow.
+  const knobs: (keyof TreatmentParams)[] = [
+    'aerationRate',
+    'coagulantDose',
+    'mixingIntensity',
+    'filterLoadingRate',
+    'sludgeBlanketDepth',
+    'flocculationTime',
+    'flowRate',
+  ];
 
-    // Check if quality targets are still met (simplified check)
-    const estimatedBodRemoval = 0.5 + aerationRate * 0.08;
-    const estimatedBod = influentQuality.bod * (1 - estimatedBodRemoval);
+  for (const knob of knobs) {
+    const range = bounds[knob];
+    if (!range) continue;
 
-    if (estimatedBod <= targets.maxBod && energy.total < bestEnergy.total) {
-      best = candidate;
-      bestEnergy = energy;
+    const [min, max] = range;
+    let low = min;
+    let high = Math.min(max, best[knob]);
+
+    // If the plant already breaks the targets at its current setting there is
+    // nothing to gain by turning this knob down.
+    if (!meetsTargets({ ...best, [knob]: high })) continue;
+
+    for (let i = 0; i < 24; i++) {
+      const mid = (low + high) / 2;
+      if (meetsTargets({ ...best, [knob]: mid })) {
+        high = mid;
+      } else {
+        low = mid;
+      }
     }
+
+    // Round to a dial-able value, but never at the cost of a target: if the
+    // rounded number breaks a limit, nudge it back up until it is legal.
+    let chosen = roundForDisplay(knob, high);
+    const step = stepFor(knob);
+    for (let i = 0; i < 200 && !meetsTargets({ ...best, [knob]: chosen }); i++) {
+      chosen = roundForDisplay(knob, chosen + step);
+    }
+    best = { ...best, [knob]: meetsTargets({ ...best, [knob]: chosen }) ? chosen : high };
   }
 
-  // Try reducing mixing intensity
-  const mixSteps = 15;
-  for (let i = 0; i <= mixSteps; i++) {
-    const mixingIntensity = bounds.mixingIntensity[0] + (bounds.mixingIntensity[1] - bounds.mixingIntensity[0]) * (i / mixSteps);
-    const candidate = { ...best, mixingIntensity };
-    const energy = calculateEnergy(candidate);
-
-    // Coag effectiveness must stay above threshold
-    const coagEffectiveness = 0.2 + candidate.coagulantDose * 0.012 + mixingIntensity * 0.15;
-    if (coagEffectiveness >= 0.5 && energy.total < bestEnergy.total) {
-      best = candidate;
-      bestEnergy = energy;
-    }
-  }
-
-  // Try reducing coagulant dose
-  const doseSteps = 15;
-  for (let i = 0; i <= doseSteps; i++) {
-    const coagulantDose = bounds.coagulantDose[0] + (bounds.coagulantDose[1] - bounds.coagulantDose[0]) * (i / doseSteps);
-    const candidate = { ...best, coagulantDose };
-    const energy = calculateEnergy(candidate);
-
-    const coagEffectiveness = 0.2 + coagulantDose * 0.012 + best.mixingIntensity * 0.15;
-    if (coagEffectiveness >= 0.5 && energy.total < bestEnergy.total) {
-      best = candidate;
-      bestEnergy = energy;
-    }
-  }
-
-  // Fine-tune flow rate
-  const flowSteps = 10;
-  for (let i = 0; i <= flowSteps; i++) {
-    const flowRate = bounds.flowRate[0] + (bounds.flowRate[1] - bounds.flowRate[0]) * (i / flowSteps);
-    const candidate = { ...best, flowRate };
-    const energy = calculateEnergy(candidate);
-
-    // Higher flow = less residence time = worse treatment
-    const residenceFactor = Math.min(1, 100 / flowRate);
-    if (residenceFactor >= 0.5 && energy.total < bestEnergy.total) {
-      best = candidate;
-      bestEnergy = energy;
-    }
-  }
-
-  // Estimate final quality
-  const estimatedBod = influentQuality.bod * (1 - (0.5 + best.aerationRate * 0.08));
-  const estimatedTurbidity = influentQuality.turbidity * (1 - Math.min(0.7, 0.3 + best.coagulantDose * 0.012)) * 0.1;
+  const energy = calculateEnergy(best);
+  const quality = calculateTreatment(best, influentQuality);
 
   return {
     params: best,
-    energy: bestEnergy,
+    energy,
     quality: {
-      turbidity: estimatedTurbidity,
-      bod: estimatedBod,
-      do: best.dissolvedOxygen * (0.5 + best.aerationRate * 0.2),
+      turbidity: quality.afterAeration.turbidity,
+      bod: quality.afterAeration.bod,
+      do: quality.afterAeration.dissolvedOxygen,
     },
   };
 }

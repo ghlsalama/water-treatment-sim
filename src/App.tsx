@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SimulationEngine, SimulationState, OptimizationResult } from './simulation/engine';
-import { SimulationCanvas } from './components/SimulationCanvas';
+import { Scene } from './components/three/Scene';
 import { Dashboard } from './components/Dashboard';
 import { ControlPanel } from './components/ControlPanel';
-import { SensorOverlay } from './components/SensorOverlay';
 import { ComparisonView } from './components/ComparisonView';
 import { AIAssistant } from './components/AIAssistant';
 import { ExportButton } from './components/ExportButton';
@@ -18,6 +17,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'controls'>('dashboard');
   const [showComparison, setShowComparison] = useState(false);
   const [optimizedParams, setOptimizedParams] = useState<TreatmentParams | null>(null);
+  const [baselineParams, setBaselineParams] = useState<TreatmentParams | null>(null);
 
   if (!engineRef.current) {
     engineRef.current = new SimulationEngine();
@@ -38,16 +38,22 @@ export default function App() {
   const handleParamChange = useCallback((key: keyof TreatmentParams, value: number) => {
     engineRef.current!.setParams({ [key]: value });
     setOptimizedResult(null);
+    setOptimizedParams(null);
+    setBaselineParams(null);
   }, []);
 
   const handleOptimize = useCallback(() => {
     const engine = engineRef.current!;
+    const baseline = { ...engine.params };
     const result = optimizeEnergy(
-      engine.params,
+      baseline,
       { maxTurbidity: 5, maxBod: 25, minDO: 4 },
-      { turbidity: INFLUENT_QUALITY.turbidity, bod: INFLUENT_QUALITY.bod }
+      INFLUENT_QUALITY
     );
-    setOptimizedParams({ ...engine.params });
+    // The comparison is "before vs after", so keep the settings the plant
+    // was running on before the optimiser touched it.
+    setBaselineParams(baseline);
+    setOptimizedParams(result.params);
     engine.setParams(result.params);
     setOptimizedResult(result);
   }, []);
@@ -60,6 +66,7 @@ export default function App() {
     engineRef.current!.reset();
     setOptimizedResult(null);
     setOptimizedParams(null);
+    setBaselineParams(null);
   }, []);
 
   if (!state) return null;
@@ -82,12 +89,7 @@ export default function App() {
         <div style={{ maxWidth: 1440, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 22, color: '#fff', fontWeight: 800, letterSpacing: -0.5 }}>
-              <span style={{
-                background: 'linear-gradient(135deg, #5ab4f5 0%, #3498db 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-              }}>Arcadis</span>
-              <span style={{ color: '#8ba3c0', fontWeight: 400, marginLeft: 8 }}>Water Treatment</span>
+              Water Treatment
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: 12, color: '#4a6a8a', letterSpacing: 0.3 }}>
               Energy Optimization Demo · Live Process Simulation
@@ -137,8 +139,8 @@ export default function App() {
       <main style={{ maxWidth: 1440, margin: '0 auto', padding: '24px 28px' }}>
         {/* Simulation canvas with overlays */}
         <div style={{ marginBottom: 20, position: 'relative' }}>
-          <SimulationCanvas engine={engineRef.current} />
-          <SensorOverlay state={state} />
+          <Scene state={state} hideLabels={showComparison} />
+
           <AIAssistant state={state} />
         </div>
 
@@ -307,9 +309,9 @@ export default function App() {
       </main>
 
       {/* Comparison modal */}
-      {showComparison && optimizedParams && (
+      {showComparison && optimizedParams && baselineParams && (
         <ComparisonView
-          currentParams={state.params}
+          currentParams={baselineParams}
           optimizedParams={optimizedParams}
           onClose={() => setShowComparison(false)}
         />

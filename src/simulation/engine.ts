@@ -4,7 +4,7 @@
  */
 
 import { FluidSolver, FluidConfig } from './fluid';
-import { ParticleSystem, ParticleType } from './particles';
+import { Particle, ParticleSystem, ParticleType } from './particles';
 import { TreatmentParams, DEFAULT_PARAMS, INFLUENT_QUALITY, WaterQuality, calculateTreatment } from './treatment';
 import { EnergyBreakdown, calculateEnergy } from './energy';
 
@@ -27,7 +27,9 @@ export interface SimulationState {
     effluent: WaterQuality;
   };
   energy: EnergyBreakdown;
-  particleStats: { total: number; solids: number; flocs: number; bubbles: number; settled: number };
+  particleStats: { total: number; solids: number; flocs: number; bubbles: number; chemicals: number; settled: number; tracers: number };
+  /** Live particle list, mutated in place by the engine. */
+  particles: Particle[];
   treatmentResults: ReturnType<typeof calculateTreatment>;
 }
 
@@ -73,7 +75,7 @@ export class SimulationEngine {
     };
 
     this.fluid = new FluidSolver(fluidConfig);
-    this.particles = new ParticleSystem(this.fluid, ZONES);
+    this.particles = new ParticleSystem(this.fluid, ZONES, () => this.params);
     this.params = { ...DEFAULT_PARAMS };
 
     this.setupGeometry();
@@ -101,13 +103,13 @@ export class SimulationEngine {
       this.fluid.setSolid(GRID_WIDTH - 1, y, true);
     }
 
-    // Baffle between coagulation and flocculation (drives flow down)
-    for (let y = 5; y < GRID_HEIGHT - 1; y++) {
+    // Baffle between coagulation and flocculation (flow passes over the top)
+    for (let y = 20; y < GRID_HEIGHT - 1; y++) {
       this.fluid.setSolid(35, y, true);
     }
 
-    // Baffle between flocculation and sedimentation (drives flow up)
-    for (let y = 0; y < GRID_HEIGHT - 25; y++) {
+    // Baffle between flocculation and sedimentation (flow passes underneath)
+    for (let y = 0; y < GRID_HEIGHT - 20; y++) {
       this.fluid.setSolid(70, y, true);
     }
 
@@ -132,12 +134,9 @@ export class SimulationEngine {
 
     this.frameCount++;
 
-    // Apply inflow boundary condition (left edge)
-    const inflowVelocity = this.params.flowRate / 50;
-    for (let y = 2; y < GRID_HEIGHT - 2; y++) {
-      this.fluid.u[this.fluid.idx(1, y)] = inflowVelocity;
-      this.fluid.v[this.fluid.idx(1, y)] = 0;
-    }
+    // Inflow boundary condition (left edge). The solver re-applies it after
+    // every pressure projection so the jet is not projected away.
+    this.fluid.inflowVelocity = this.params.flowRate / 50;
 
     // Mixing in coagulation zone (adds turbulence)
     if (this.frameCount % 2 === 0) {
@@ -207,6 +206,12 @@ export class SimulationEngine {
       const bubbleCount = Math.ceil(this.params.aerationRate * 0.8);
       this.particles.emit('bubble', 145 + Math.random() * 25, GRID_HEIGHT - 5, bubbleCount);
     }
+
+    // Tracers are injected at the inlet so the flow path through the whole
+    // train is visible.
+    if (this.frameCount % 4 === 0) {
+      this.particles.emit('tracer', 2, 8 + Math.random() * 30, 2);
+    }
   }
 
   private updateTreatmentResults(): void {
@@ -233,6 +238,7 @@ export class SimulationEngine {
       },
       energy: this.energyResults!,
       particleStats: this.particles.getStats(),
+      particles: this.particles.particles,
       treatmentResults: this.treatmentResults!,
     };
   }

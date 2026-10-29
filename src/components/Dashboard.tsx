@@ -186,6 +186,8 @@ export function Dashboard({ state }: Props) {
           <ParticleStat color="#c4a060" label="Solids" count={particleStats.solids} />
           <ParticleStat color="#a0783c" label="Flocs" count={particleStats.flocs} />
           <ParticleStat color="#96d2ff" label="Bubbles" count={particleStats.bubbles} />
+          <ParticleStat color="#ffc832" label="Chemicals" count={particleStats.chemicals} />
+          <ParticleStat color="#7ce8b8" label="Tracers" count={particleStats.tracers} />
           <ParticleStat color="#6a8aaa" label="Settled" count={particleStats.settled} />
         </div>
       </Panel>

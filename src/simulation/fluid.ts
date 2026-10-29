@@ -33,6 +33,9 @@ export class FluidSolver {
   // Solid mask: 1 = fluid, 0 = solid wall
   solid: Uint8Array;
 
+  /** Velocity injected at the left edge of the domain. */
+  inflowVelocity = 0;
+
   constructor(config: FluidConfig) {
     this.width = config.width;
     this.height = config.height;
@@ -87,6 +90,22 @@ export class FluidSolver {
     this.stepDensity();
   }
 
+  /**
+   * Pin the inlet velocity. This has to happen after the pressure
+   * projection, otherwise the projection cancels it out: a closed box with a
+   * single velocity boundary conserves zero net flux, so the inflow would
+   * simply be projected away and nothing would ever move.
+   */
+  applyFlowBoundaries(): void {
+    if (this.inflowVelocity === 0) return;
+    for (let y = 2; y < this.height - 2; y++) {
+      const i = this.idx(1, y);
+      if (this.solid[i] === 0) continue;
+      this.u[i] = this.inflowVelocity;
+      this.v[i] = 0;
+    }
+  }
+
   private stepVelocity(): void {
     const { u, v, u0, v0, viscosity, dt, iterations } = this;
 
@@ -94,15 +113,23 @@ export class FluidSolver {
     this.diffuse(u0, u, viscosity, dt);
     this.diffuse(v0, v, viscosity, dt);
 
-    // Project (make divergence-free)
+    // Project (make divergence-free). u0/v0 double as the pressure and
+    // divergence scratch space here.
     this.project(u, v, u0, v0, iterations);
 
-    // Advect
-    this.advect(u, u0, u0, v0, dt);
-    this.advect(v, v0, u0, v0, dt);
+    // Re-pin the inlet so the advection sees the driving velocity.
+    this.applyFlowBoundaries();
+
+    // Advect. The velocity field has to be passed as the transport field -
+    // u0/v0 hold the pressure at this point, not the velocity.
+    this.advect(u0, u, u, v, dt);
+    u.set(u0);
+    this.advect(v0, v, u, v, dt);
+    v.set(v0);
 
     // Project again
     this.project(u, v, u0, v0, iterations);
+    this.applyFlowBoundaries();
   }
 
   private stepDensity(): void {
@@ -117,7 +144,7 @@ export class FluidSolver {
 
     for (let k = 0; k < this.iterations; k++) {
       for (let y = 1; y < this.height - 1; y++) {
-        for (let x = 1; x < this.width - 1; x++) {
+        for (let x = 1; x < this.width - 2; x++) {
           const i = this.idx(x, y);
           if (this.solid[i] === 0) continue;
           out[i] = (inp[i] + a * (
@@ -128,6 +155,9 @@ export class FluidSolver {
       }
       this.setBoundary(out);
     }
+
+    // Write the diffused field back to its source.
+    inp.set(out);
   }
 
   private project(u: Float32Array, v: Float32Array, p: Float32Array, div: Float32Array, iterations: number): void {
@@ -143,7 +173,7 @@ export class FluidSolver {
     }
 
     this.setBoundary(div);
-    this.setBoundary(p);
+    this.setBoundary(p, true);
 
     for (let k = 0; k < iterations; k++) {
       for (let y = 1; y < this.height - 1; y++) {
@@ -153,7 +183,7 @@ export class FluidSolver {
           p[i] = (div[i] + p[i - 1] + p[i + 1] + p[i - this.width] + p[i + this.width]) / 4;
         }
       }
-      this.setBoundary(p);
+      this.setBoundary(p, true);
     }
 
     const s = 0.5;
@@ -203,29 +233,40 @@ export class FluidSolver {
     this.setBoundary(out);
   }
 
-  private setBoundary(field: Float32Array): void {
+  private setBoundary(field: Float32Array, isPressure = false): void {
     const w = this.width;
     const h = this.height;
+    // Last fluid column: the tank outlet.
+    const outlet = w - 2;
 
-    // Left and right walls
+    // Domain walls use a zero-gradient condition. This has to stay Neumann:
+    // pinning the pressure to zero on the walls lets the projection cancel
+    // the inlet jet, and the whole tank goes dead.
     for (let y = 0; y < h; y++) {
       field[this.idx(0, y)] = field[this.idx(1, y)];
-      field[this.idx(w - 1, y)] = field[this.idx(w - 2, y)];
+      field[this.idx(w - 1, y)] = field[this.idx(outlet, y)];
     }
-
-    // Top and bottom walls
     for (let x = 0; x < w; x++) {
       field[this.idx(x, 0)] = field[this.idx(x, 1)];
       field[this.idx(x, h - 1)] = field[this.idx(x, h - 2)];
     }
 
-    // Solid obstacles
+    // Interior obstacles: zero-gradient pressure across the obstacle face and
+    // a no-slip velocity.
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const i = this.idx(x, y);
         if (this.solid[i] === 0) {
-          field[i] = 0;
+          field[i] = isPressure ? field[i - 1] : 0;
         }
+      }
+    }
+
+    // The outlet column is open to atmosphere (zero pressure) so water can
+    // leave the tank instead of piling up against a closed end.
+    if (isPressure) {
+      for (let y = 0; y < h; y++) {
+        field[this.idx(w - 1, y)] = 0;
       }
     }
   }
